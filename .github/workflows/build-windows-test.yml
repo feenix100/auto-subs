@@ -1,0 +1,112 @@
+name: Build patched AutoSubs Windows test
+
+on:
+  push:
+    branches:
+      - resolve-21.1-loader-test
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout patched branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            AutoSubs-App/package-lock.json
+            Adobe-Extension/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.357.0
+          install_runtime: false
+          cache: true
+          stripdown: true
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: |
+          npm ci --prefix Adobe-Extension
+          npm ci --prefix AutoSubs-App
+
+      - name: Download Windows FFmpeg sidecar
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg-windows.zip'
+          $extract = Join-Path $env:RUNNER_TEMP 'ffmpeg-windows'
+          $binDir = 'AutoSubs-App/src-tauri/binaries'
+          New-Item -ItemType Directory -Force -Path $extract, $binDir | Out-Null
+
+          Invoke-WebRequest \
+            -Uri 'https://github.com/tmoroney/ffmpeg-binaries/releases/download/V8.0.0/ffmpeg-x86_64-pc-windows-msvc.zip' \
+            -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+          $ffmpeg = Get-ChildItem -Path $extract -Recurse -Filter 'ffmpeg*.exe' | Select-Object -First 1
+          if (-not $ffmpeg) {
+            throw 'FFmpeg executable was not found in the downloaded archive.'
+          }
+
+          $dest = Join-Path $binDir 'ffmpeg-x86_64-pc-windows-msvc.exe'
+          Copy-Item $ffmpeg.FullName $dest -Force
+          Write-Host "FFmpeg sidecar: $dest"
+
+      - name: Disable release signing for test build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'AutoSubs-App/src-tauri/tauri.conf.json'
+          $cfg = Get-Content $path -Raw | ConvertFrom-Json
+
+          # This fork does not have the upstream code-signing certificate or
+          # Tauri updater private key. Remove signing only in the ephemeral CI
+          # checkout so the repository configuration remains unchanged.
+          $cfg.bundle.windows.PSObject.Properties.Remove('certificateThumbprint')
+          $cfg.bundle.windows.PSObject.Properties.Remove('timestampUrl')
+          $cfg.bundle.windows.PSObject.Properties.Remove('digestAlgorithm')
+          $cfg.bundle.windows.PSObject.Properties.Remove('signCommand')
+          $cfg.bundle.createUpdaterArtifacts = $false
+          $cfg.bundle.targets = @('nsis')
+
+          $cfg | ConvertTo-Json -Depth 100 | Set-Content -Path $path -Encoding utf8
+
+      - name: Build patched AutoSubs installer
+        shell: pwsh
+        working-directory: AutoSubs-App
+        run: npm run build:win
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem 'AutoSubs-App/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) {
+            throw 'NSIS installer was not produced.'
+          }
+
+          New-Item -ItemType Directory -Force -Path 'windows-test-artifact' | Out-Null
+          Copy-Item $installer.FullName 'windows-test-artifact/AutoSubs-3.8.0-Resolve-21.1-test-x86_64.exe'
+          Get-Item 'windows-test-artifact/AutoSubs-3.8.0-Resolve-21.1-test-x86_64.exe' | Format-List FullName,Length
+
+      - name: Upload Windows test installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoSubs-Resolve-21.1-Windows-Test
+          path: windows-test-artifact/AutoSubs-3.8.0-Resolve-21.1-test-x86_64.exe
+          if-no-files-found: error
+          retention-days: 7
