@@ -2,9 +2,9 @@
 ---I disable the undefined global warnings for them to stop my editor from complaining
 ---@diagnostic disable: undefined-global
 local ffi = ffi
+local sep = ffi.os == "Windows" and "\\" or "/"
 
 local function join_path(dir, filename)
-    local sep = package.config:sub(1,1) -- returns '\\' on Windows, '/' elsewhere
     -- Remove trailing separator from dir, if any
     if dir:sub(-1) == sep then
         return dir .. filename
@@ -35,21 +35,38 @@ end
 -- `npm run setup-resolve` generates a self-contained dev launcher that points
 -- Resolve directly at your repo checkout and starts the server in dev mode.
 
--- Set package path for module loading
+-- Resolve 21.1 may hide package/require from Workspace scripts. Bootstrap the
+-- minimal module environment AutoSubs needs before loading any modules.
 local modules_path = join_path(resources_folder, "modules")
-package.path = package.path .. ";" .. join_path(modules_path, "?.lua")
+local compat_path = join_path(modules_path, "resolve_compat.lua")
+local compat_chunk, compat_err = loadfile(compat_path)
+if not compat_chunk then
+    error("Could not load AutoSubs Resolve compatibility bootstrap: " .. tostring(compat_err))
+end
+local compat = compat_chunk()
+if type(compat) ~= "table" or type(compat.bootstrap) ~= "function" then
+    error("AutoSubs Resolve compatibility bootstrap returned an invalid module")
+end
+compat.bootstrap(modules_path)
 
 -- Verify the AutoSubs resources actually exist before attempting to load them.
 -- This guards against stale/duplicate installs (e.g. an old app left in a
 -- different location) which otherwise produce a cryptic LuaJIT
 -- "module 'autosubs_core' not found" stack trace listing many paths.
 local function file_exists(path)
-    local f = io.open(path, "r")
-    if f then
-        f:close()
-        return true
+    if io ~= nil and type(io.open) == "function" then
+        local f = io.open(path, "r")
+        if f then
+            f:close()
+            return true
+        end
+        return false
     end
-    return false
+
+    -- Resolve 21.1 can omit io from the embedded script environment. loadfile
+    -- is still exposed and is sufficient for checking a Lua resource file.
+    local chunk = loadfile(path)
+    return chunk ~= nil
 end
 
 local core_module_path = join_path(modules_path, "autosubs_core.lua")
