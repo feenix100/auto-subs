@@ -22,15 +22,22 @@ if (platform === 'darwin') {
 }
 
 const args = ['tauri', 'dev', '--features', feature, '--', '--no-default-features'];
-const npxCommand = platform === 'win32' ? 'npx.cmd' : 'npx';
+
+let command = 'npx';
+let commandArgs = args;
+
+if (platform === 'win32') {
+  command = process.env.ComSpec || 'cmd.exe';
+  commandArgs = ['/d', '/s', '/c', 'npx', ...args];
+}
 
 console.log(`[AutoSubs Dev] Platform: ${platform} (${arch})`);
-console.log(`[AutoSubs Dev] Command: ${npxCommand} ${args.join(' ')}`);
+console.log(`[AutoSubs Dev] Command: ${command} ${commandArgs.join(' ')}`);
 
-const child = spawn(npxCommand, args, { stdio: 'inherit' });
+const child = spawn(command, commandArgs, { stdio: 'inherit' });
 
 child.on('error', (error) => {
-  console.error(`[AutoSubs Dev] Failed to start ${npxCommand}: ${error.message}`);
+  console.error(`[AutoSubs Dev] Failed to start ${command}: ${error.message}`);
   process.exit(1);
 });
 
