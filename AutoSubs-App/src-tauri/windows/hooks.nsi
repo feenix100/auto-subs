@@ -15,7 +15,10 @@
   FileWrite $0 $INSTDIR
   FileWrite $0 "\resources]]$\r$\n"
   FileWrite $0 "local modules_path = resources_folder .. $\"\\modules$\"$\r$\n"
-  FileWrite $0 "package.path = package.path .. $\";$\" .. modules_path .. $\"\\?.lua$\"$\r$\n"
+  ; Resolve 21.1 can hide package/require from Workspace scripts. Bootstrap them
+  ; using loadfile before the generated launcher references either global.
+  FileWrite $0 "local compat = assert(loadfile(modules_path .. $\"\\resolve_compat.lua$\"))()$\r$\n"
+  FileWrite $0 "compat.bootstrap(modules_path)$\r$\n"
   FileWrite $0 "local AutoSubs = require($\"autosubs_core$\")$\r$\n"
   FileWrite $0 "AutoSubs:Init(app_executable, resources_folder, false)$\r$\n"
   FileClose $0
