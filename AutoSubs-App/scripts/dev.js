@@ -22,11 +22,17 @@ if (platform === 'darwin') {
 }
 
 const args = ['tauri', 'dev', '--features', feature, '--', '--no-default-features'];
+const npxCommand = platform === 'win32' ? 'npx.cmd' : 'npx';
 
 console.log(`[AutoSubs Dev] Platform: ${platform} (${arch})`);
-console.log(`[AutoSubs Dev] Command: npx ${args.join(' ')}`);
+console.log(`[AutoSubs Dev] Command: ${npxCommand} ${args.join(' ')}`);
 
-const child = spawn('npx', args, { stdio: 'inherit' });
+const child = spawn(npxCommand, args, { stdio: 'inherit' });
+
+child.on('error', (error) => {
+  console.error(`[AutoSubs Dev] Failed to start ${npxCommand}: ${error.message}`);
+  process.exit(1);
+});
 
 child.on('close', (code) => {
   process.exit(code || 0);
