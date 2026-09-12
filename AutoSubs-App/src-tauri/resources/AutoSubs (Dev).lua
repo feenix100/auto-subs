@@ -18,6 +18,9 @@
 -- loads AutoSubs.lua. Edits to the Lua modules are picked up the next time you
 -- run this script from Resolve (no rebuild needed).
 
+---@diagnostic disable: undefined-global
+local ffi = ffi
+
 -- `npm run setup-resolve` replaces the placeholder below with the absolute path
 -- to the repo's `src-tauri/resources` folder.
 local resources_folder = [[__AUTOSUBS_RESOURCES_FOLDER__]]
@@ -30,7 +33,9 @@ if resources_folder == "__AUTOSUBS_RESOURCES_FOLDER__" then
     )
 end
 
-local sep = package.config:sub(1, 1) -- '\\' on Windows, '/' elsewhere
+-- Resolve 21.1 may hide package/require from Workspace scripts. Use only
+-- primitives Resolve still exposes to bootstrap AutoSubs before touching them.
+local sep = ffi.os == "Windows" and "\\" or "/"
 local function join_path(dir, filename)
     if dir:sub(-1) == sep then
         return dir .. filename
@@ -38,12 +43,19 @@ local function join_path(dir, filename)
     return dir .. sep .. filename
 end
 
--- Make the AutoSubs Lua modules importable, then launch the core server.
 local modules_path = join_path(resources_folder, "modules")
-package.path = package.path .. ";" .. join_path(modules_path, "?.lua")
+local compat_path = join_path(modules_path, "resolve_compat.lua")
+local compat_chunk, compat_err = loadfile(compat_path)
+if not compat_chunk then
+    error("Could not load AutoSubs Resolve compatibility bootstrap: " .. tostring(compat_err))
+end
+local compat = compat_chunk()
+if type(compat) ~= "table" or type(compat.bootstrap) ~= "function" then
+    error("AutoSubs Resolve compatibility bootstrap returned an invalid module")
+end
+compat.bootstrap(modules_path)
 
 local AutoSubs = require("autosubs_core")
 -- No executable path is needed in dev mode: the core server never launches the
 -- desktop app while dev mode is enabled (the final argument below).
 return AutoSubs:Init("", resources_folder, true)
-
